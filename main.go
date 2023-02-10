@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -14,10 +15,36 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-var bucket string = "s3-md5-bucket"
-var key string = "test.jpg"
+var bucket *string = flag.String("bucket", "", "name of the bucket")
+var key *string = flag.String("key", "", "name of the object")
+var chunkSize *int64 = flag.Int64("chunkSize", 1000000, "chunk size to download on each request")
+
+func getObjectSize(client *s3.Client, bucket string, key string) int64 {
+	headObjectOutput, err := client.HeadObject(context.TODO(), &s3.HeadObjectInput{
+		Bucket: &bucket,
+		Key:    &key,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	return headObjectOutput.ContentLength
+}
+
+func calculateObjectRange(partNumber int, chunkSize int64, chunkCount int, objectSize int64) string {
+	startRange := int64(partNumber * int(chunkSize))
+	endRange := objectSize
+	if (partNumber + 1) != chunkCount {
+		endRange = int64((startRange + chunkSize) - 1)
+	}
+	return fmt.Sprintf("bytes=%v-%v", startRange, endRange)
+}
 
 func main() {
+	flag.Parse()
+	if *bucket == "" || *key == "" {
+		log.Fatal("bucket and key name must be provided. Use -h for help")
+	}
+
 	start := time.Now()
 
 	cfg, err := config.LoadDefaultConfig(context.TODO())
@@ -26,41 +53,27 @@ func main() {
 	}
 	client := s3.NewFromConfig(cfg)
 
-	headObjectOutput, err := client.HeadObject(context.TODO(), &s3.HeadObjectInput{
-		Bucket: &bucket,
-		Key:    &key,
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	objectSize := headObjectOutput.ContentLength
-	var chunkSize int64 = 1000000
-	var chunkCount int = int(objectSize / chunkSize)
+	objectSize := getObjectSize(client, *bucket, *key)
+	log.Printf("object size %v bytes", objectSize)
+	chunkCount := int(objectSize / *chunkSize)
+	log.Printf("chunk count %v", chunkCount)
 
 	md5Hash := md5.New()
 	wg := sync.WaitGroup{}
 	results := make([][]byte, chunkCount)
 
-	for i := 0; i < chunkCount; i++ {
-		startRange := int64(i * int(chunkSize)) // 0
-		var endRange int64
-		if (i + 1) == chunkCount {
-			endRange = objectSize
-		} else {
-			endRange = int64((startRange + chunkSize) - 1)
-		}
-		rangeToGet := fmt.Sprintf("bytes=%v-%v", startRange, endRange)
-
+	for partNumber := 0; partNumber < chunkCount; partNumber++ {
+		rangeToGet := calculateObjectRange(partNumber, *chunkSize, chunkCount, objectSize)
 		wg.Add(1)
 		go func(partNumber int, rangeString string) {
-			body, err := io.ReadAll(getS3ObjectRange(client, &rangeString))
+			body, err := io.ReadAll(getS3ObjectRange(client, *bucket, *key, rangeString))
 			if err != nil {
 				log.Fatal(err)
 			}
 
 			results[partNumber] = body
 			wg.Done()
-		}(i, rangeToGet)
+		}(partNumber, rangeToGet)
 	}
 	wg.Wait()
 
@@ -71,20 +84,21 @@ func main() {
 		}
 	}
 	md5String := hex.EncodeToString(md5Hash.Sum(nil))
-	fmt.Println(md5String)
+	log.Printf("md5 hash %v", md5String)
 	elapsed := time.Since(start).Seconds()
-	fmt.Printf("time %v seconds", elapsed)
+	log.Printf("time %v seconds taken", elapsed)
 }
 
-func getS3ObjectRange(client *s3.Client, rangeToGet *string) io.ReadCloser {
+func getS3ObjectRange(client *s3.Client, bucket string, key, rangeToGet string) io.ReadCloser {
+	log.Printf("range %v fetching", rangeToGet)
 	getObjectOutput, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
 		Bucket: &bucket,
 		Key:    &key,
-		Range:  rangeToGet,
+		Range:  &rangeToGet,
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
-
+	log.Printf("range %v fetched", rangeToGet)
 	return getObjectOutput.Body
 }
