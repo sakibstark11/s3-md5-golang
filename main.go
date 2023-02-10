@@ -54,6 +54,10 @@ func main() {
 	client := s3.NewFromConfig(cfg)
 
 	objectSize := getObjectSize(client, *bucket, *key)
+	if objectSize < *chunkSize {
+		log.Fatal("object size must be greater than chunk size")
+	}
+
 	log.Printf("object size %v bytes", objectSize)
 	chunkCount := int(objectSize / *chunkSize)
 	log.Printf("chunk count %v", chunkCount)
