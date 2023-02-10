@@ -8,7 +8,7 @@ Get fast md5 hashes for an s3 object using multiple gophers (i.e go routines).
 ### Steps
 - Run
     ```shell
-    go mod download
+    go get .
     ```
     to get all the dependencies
 - Run
