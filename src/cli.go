@@ -2,10 +2,6 @@ package src
 
 import "flag"
 
-var bucket *string = flag.String("bucket", "", "name of the bucket")
-var key *string = flag.String("key", "", "name of the object")
-var chunkSize *int64 = flag.Int64("chunkSize", 1000000, "chunk size to download on each request")
-
 type cliArgs struct {
 	Bucket    string
 	Key       string
@@ -13,6 +9,9 @@ type cliArgs struct {
 }
 
 func ParseCliArgs() cliArgs {
+	bucket := flag.String("bucket", "", "name of the bucket")
+	key := flag.String("key", "", "name of the object")
+	chunkSize := flag.Int64("chunkSize", 1000000, "chunk size to download on each request")
 	flag.Parse()
 	return cliArgs{
 		Bucket:    *bucket,

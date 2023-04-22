@@ -2,6 +2,7 @@ package src
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -9,36 +10,50 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-func GetObjectSize(client *s3.Client, bucket string, key string) int64 {
-	headObjectOutput, err := client.HeadObject(context.TODO(), &s3.HeadObjectInput{
-		Bucket: &bucket,
-		Key:    &key,
+type S3Helper struct {
+	Client     *s3.Client
+	Bucket     string
+	Key        string
+	objectSize int64
+	ChunkSize  int64
+}
+
+func (helper *S3Helper) GetObjectSize() (int64, error) {
+	headObjectOutput, err := helper.Client.HeadObject(context.TODO(), &s3.HeadObjectInput{
+		Bucket: &helper.Bucket,
+		Key:    &helper.Key,
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
-	return headObjectOutput.ContentLength
+	objectSize := headObjectOutput.ContentLength
+	if objectSize < helper.ChunkSize {
+
+		return 0, errors.New("object size must be greater than chunk size")
+	}
+	helper.objectSize = objectSize
+
+	return objectSize, nil
 }
 
-func CalculateObjectRange(partNumber int, chunkSize int64, chunkCount int, objectSize int64) string {
-	startRange := int64(partNumber * int(chunkSize))
-	endRange := objectSize
+func (helper *S3Helper) CalculateObjectRange(partNumber int, chunkCount int) string {
+	startRange := int64(partNumber) * helper.ChunkSize
+	endRange := helper.objectSize
 	if (partNumber + 1) != chunkCount {
-		endRange = int64((startRange + chunkSize) - 1)
+		endRange = (startRange + helper.ChunkSize) - 1
 	}
+
 	return fmt.Sprintf("bytes=%v-%v", startRange, endRange)
 }
 
-func GetS3ObjectRange(client *s3.Client, bucket string, key, rangeToGet string) io.ReadCloser {
-	log.Printf("range %v fetching", rangeToGet)
-	getObjectOutput, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
-		Bucket: &bucket,
-		Key:    &key,
+func (helper *S3Helper) GetS3ObjectRange(rangeToGet string) io.ReadCloser {
+	getObjectOutput, err := helper.Client.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: &helper.Bucket,
+		Key:    &helper.Key,
 		Range:  &rangeToGet,
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("range %v fetched", rangeToGet)
 	return getObjectOutput.Body
 }

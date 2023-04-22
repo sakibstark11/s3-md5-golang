@@ -20,7 +20,7 @@ func main() {
 	args := src.ParseCliArgs()
 	bucket := args.Bucket
 	key := args.Key
-	chunkSize := args.ChunkSize
+
 	if bucket == "" || key == "" {
 		log.Fatal("bucket and key name must be provided. Use -h for help")
 	}
@@ -29,14 +29,22 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	client := s3.NewFromConfig(cfg)
 
-	objectSize := src.GetObjectSize(client, bucket, key)
-	if objectSize < chunkSize {
-		log.Fatal("object size must be greater than chunk size")
+	chunkSize := args.ChunkSize
+	s3Helper := src.S3Helper{
+		Bucket:    bucket,
+		Key:       key,
+		Client:    s3.NewFromConfig(cfg),
+		ChunkSize: chunkSize,
+	}
+
+	objectSize, err := s3Helper.GetObjectSize()
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	log.Printf("object size %v bytes", objectSize)
+
 	chunkCount := int(objectSize / chunkSize)
 	log.Printf("chunk count %v", chunkCount)
 
@@ -45,10 +53,10 @@ func main() {
 	results := make([][]byte, chunkCount)
 
 	for partNumber := 0; partNumber < chunkCount; partNumber++ {
-		rangeToGet := src.CalculateObjectRange(partNumber, chunkSize, chunkCount, objectSize)
+		rangeToGet := s3Helper.CalculateObjectRange(partNumber, chunkCount)
 		wg.Add(1)
 		go func(partNumber int, rangeString string) {
-			body, err := io.ReadAll(src.GetS3ObjectRange(client, bucket, key, rangeString))
+			body, err := io.ReadAll(s3Helper.GetS3ObjectRange(rangeString))
 			if err != nil {
 				log.Fatal(err)
 			}
